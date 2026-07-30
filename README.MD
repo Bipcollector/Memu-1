@@ -6,6 +6,7 @@ Pour cette première version, j'ai fait appel à toute une équipe d'IA :
 
 ChatGPT
 Z.ai
+Kimi
 Lovable
 Gemini
 ...
@@ -14,11 +15,11 @@ Ils m'ont aidé à accoucher d'une première version... disons... super boîteus
 
 Attention, tout n'est pas encore rose :
 
-Le copier/coller de programmes BASIC reste assez capricieux. Le Memo1 a parfois du mal à suivre le rythme.
+
 En revanche, le glisser-déposer des cartouches fonctionne parfaitement, et ça, c'est déjà une belle victoire.
 Autre petit détail : votre clavier moderne et celui du Minitel ne parlent pas exactement la même langue, notamment au niveau du pavé numérique. Il y a donc encore quelques adaptations à prévoir.
 
-Bref, ce prototype est loin d'être parfait, mais il est suffisamment stable pour commencer à jouer avec et recueillir vos retours. ( Attention pas au Boulot hum hum)
+Bref, ce prototype est loin d'être parfait, mais il est suffisamment stable pour commencer à jouer avec et recueillir vos retours.
 
 Et comme il me restait quelques tokens avant de fermer la boutique, j'ai demandé à Claude de me bricoler en quatrième vitesse un petit mode d'emploi. Il devrait vous permettre de prendre l'émulateur en main sans trop vous arracher les cheveux.
 
