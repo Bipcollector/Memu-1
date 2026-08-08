@@ -1,3 +1,22 @@
+// ======================================================
+//  MEMU-1 - Emulateur Memo1
+// ======================================================
+//  Par Bipcollector, Claude, Kimi
+//  Lovable, Gemini & ChatGPT
+// ------------------------------------------------------
+//  Musiques :
+//    Berlinadine
+//    Forever Damned - Victorian Gothic Punk Rock
+//    Death to the Machines! - Geek Rock Alt Rock Punk
+//    '百鬼降壇' ー風魔會 禍祓座ー
+// ------------------------------------------------------
+//  Une Création BIP-SOFT - 2026
+// ======================================================
+//  Bastion Interplanétaire Positronique
+//  Bastion numérique dédiée à la création humaine
+//  par des systèmes artificiels
+// ======================================================
+
 #include <iostream>
 #include <fstream>
 #include <sstream>
@@ -10,8 +29,14 @@
 #include <windows.h>
 #include "Bus.h"
 #include "CPU65C02.h"
+#include "AudioEngine.h"
+#include "KCS.h"
 
 namespace fs = std::filesystem;
+
+// Instance globale du moteur audio : accessible depuis handleQuit(),
+// le gestionnaire Ctrl+C/fermeture, et la boucle d'émulation.
+static AudioEngine g_audio;
 
 // ============================================================
 //  Active le mode ANSI (VT100) dans la console Windows 10+
@@ -113,6 +138,7 @@ static void restoreConsole() {
     std::cout << "\033[?1049l";
     std::cout << "\033[?25h";  // remettre le curseur visible
     std::cout.flush();
+    g_audio.shutdown();        // couper le son proprement avant de sortir
 }
 
 // ------------------------------------------------------------
@@ -170,7 +196,15 @@ std::string exeDir() {
 std::string hddDir() {
     std::string dir = exeDir() + "HDD\\";
     std::error_code ec;
-    fs::create_directories(dir, ec);  // ne fait rien si déjà présent
+    fs::create_directories(dir, ec);
+    return dir;
+}
+
+// Dossier CAS : fichiers WAV de cassette KCS
+std::string casDir() {
+    std::string dir = exeDir() + "CAS\\";
+    std::error_code ec;
+    fs::create_directories(dir, ec);
     return dir;
 }
 
@@ -355,16 +389,89 @@ static void handleLoad(Bus& bus, CPU65C02& cpu) {
     }
     std::sort(basFiles.begin(), basFiles.end());
 
-    std::cout << "\n\033[0m[CHARGEMENT] Fichiers .bas disponibles dans HDD\\ :\n";
+    // ── Préparer la console pour notre menu ─────────────────────────────
+    // 1. Vider le buffer TX de l'ACIA (caractères ROM en attente d'affichage)
+    //    SANS les afficher, pour ne pas polluer l'écran pendant le menu.
+    bus.getACIA().flushDisplay();   // affiche ce qui est déjà à l'écran
+    bus.getACIA().clearDisplayBuf(); // jette ce qui arriverait pendant la saisie
+
+    // 2. Construire le bloc menu en mémoire pour l'afficher d'un seul coup
+    //    (évite les interleaves si la console buffer encore quelque chose)
+    std::string menu;
+    menu += "\n\033[0m";
+    menu += "+---------------------------------------------------------+\n";
+    menu += "|  CTRL+O -- CHARGEMENT FICHIER BASIC                    |\n";
+    menu += "+---------------------------------------------------------+\n";
     if (basFiles.empty()) {
-        std::cout << "  (aucun fichier .bas dans le dossier HDD)\n";
+        menu += "|  (aucun fichier .bas dans le dossier HDD)              |\n";
     } else {
         for (size_t i = 0; i < basFiles.size(); i++) {
-            std::cout << "  " << (i + 1) << ". " << basFiles[i] << "\n";
+            std::string display = "  " + std::to_string(i + 1) + ". " + basFiles[i];
+            if (display.size() > 57) display = display.substr(0, 54) + "...";
+            while (display.size() < 57) display += ' ';
+            menu += "|" + display + "|\n";
+        }
+    }
+    menu += "+---------------------------------------------------------+\n";
+    menu += "| Numero ou nom (Entree = annuler) : ";
+
+    // 3. Préparer la console : écho DÉSACTIVÉ pour contrôler nous-mêmes
+    //    où les caractères tapés apparaissent (toujours sur la ligne prompt,
+    //    jamais au milieu de la liste).
+    HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
+    HANDLE hIn  = GetStdHandle(STD_INPUT_HANDLE);
+    DWORD savedMode = 0;
+    GetConsoleMode(hIn, &savedMode);
+    // ENABLE_PROCESSED_INPUT pour Ctrl+C, mais PAS ENABLE_ECHO_INPUT
+    SetConsoleMode(hIn, ENABLE_PROCESSED_INPUT);
+    FlushConsoleInputBuffer(hIn);
+
+    // Écriture atomique du menu entier d'un seul coup
+    DWORD written = 0;
+    WriteConsoleA(hOut, menu.c_str(), (DWORD)menu.size(), &written, nullptr);
+
+    // 4. Lire caractère par caractère avec écho manuel sur la ligne du prompt.
+    //    On ne laisse jamais Windows placer l'écho lui-même : on écrit
+    //    chaque caractère reçu sur stdout nous-mêmes, juste après le prompt.
+    std::string choice;
+    while (true) {
+        INPUT_RECORD rec;
+        DWORD numRead = 0;
+        if (!ReadConsoleInputA(hIn, &rec, 1, &numRead) || numRead == 0)
+            continue;
+        if (rec.EventType != KEY_EVENT || !rec.Event.KeyEvent.bKeyDown)
+            continue;
+        char ch = rec.Event.KeyEvent.uChar.AsciiChar;
+        WORD vk = rec.Event.KeyEvent.wVirtualKeyCode;
+
+        if (vk == VK_RETURN) {
+            // Entrée : fin de saisie, on passe à la ligne
+            WriteConsoleA(hOut, "\n", 1, &written, nullptr);
+            break;
+        }
+        if ((vk == VK_BACK || ch == '\b') && !choice.empty()) {
+            // Backspace : effacer le dernier caractère
+            choice.pop_back();
+            // Reculer le curseur, écrire espace, reculer encore
+            WriteConsoleA(hOut, "\b \b", 3, &written, nullptr);
+            continue;
+        }
+        if (ch >= 32 && ch < 127) {
+            // Caractère imprimable : ajouter à la saisie et afficher
+            choice += ch;
+            WriteConsoleA(hOut, &ch, 1, &written, nullptr);
         }
     }
 
-    std::string choice = promptLine("Numero ou nom de fichier (Entree pour annuler) : ");
+    // 5. Ligne de fermeture du cadre
+    const char* footer = "+---------------------------------------------------------+\n";
+    WriteConsoleA(hOut, footer, (DWORD)strlen(footer), &written, nullptr);
+
+    // 6. Jeter tout ce que l'ACIA a accumulé pendant la saisie
+    bus.getACIA().clearDisplayBuf();
+
+    SetConsoleMode(hIn, savedMode);
+    FlushConsoleInputBuffer(hIn);
     if (choice.empty()) {
         std::cout << "[ANNULE]\n";
         return;
@@ -414,14 +521,228 @@ static void handleLoad(Bus& bus, CPU65C02& cpu) {
     std::cout << "[CHARGEMENT] HDD\\" << filename << " (" << normalized.size()
                << " octets) -> injection en cours...\n";
 
-    // On efface le programme courant avant de charger le nouveau,
-    // pour ne pas mélanger d'anciennes lignes avec les nouvelles.
+    // Efface le programme courant, puis attend que le BASIC soit prêt.
     injectString(bus, "NEW\r");
     runCyclesBlocking(bus, cpu, 2000000);
 
-    injectString(bus, normalized);
+    // Injecter le fichier LIGNE PAR LIGNE avec une pause entre chaque.
+    // Injecter tout d'un coup surcharge le BASIC qui ne peut pas traiter
+    // les lignes assez vite : elles se superposent et corrompent le programme.
+    // On découpe sur '\r' (normalisé plus haut) et on attend ~500 000 cycles
+    // (~500ms simulés) par ligne, ce qui laisse le temps au BASIC de l'enregistrer.
+    std::string line;
+    int lineCount = 0;
+    for (char c : normalized) {
+        line += c;
+        if (c == '\r') {
+            injectString(bus, line);
+            runCyclesBlocking(bus, cpu, 500000);
+            line.clear();
+            lineCount++;
+        }
+    }
+    if (!line.empty()) {
+        injectString(bus, line);
+        runCyclesBlocking(bus, cpu, 500000);
+        lineCount++;
+    }
 
-    std::cout << "[OK] Fichier injecte. Il sera tape au rythme normal.\n";
+    std::cout << "[OK] " << lineCount << " lignes injectees depuis HDD\\" << filename << "\n";
+}
+
+// ============================================================
+//  KCS SAVE : lit TXTTAB/VARTAB depuis la RAM, encode en WAV
+// ============================================================
+//
+//  Quand le BASIC exécute SAVE, la ROM affiche "Press REC then any key"
+//  et attend une touche. On intercepte ce moment en surveillant le
+//  buffer TX de l'ACIA, on lit les adresses start/end depuis la page
+//  zéro, on génère le WAV, et on injecte une touche pour continuer.
+//
+//  Page zéro MS-BASIC Memo-1 :
+//    $84/$85 = TXTTAB (adresse début programme BASIC)
+//    $86/$87 = VARTAB (adresse fin programme = premier octet variables)
+//
+static void handleKCSSave(Bus& bus, CPU65C02& cpu) {
+    // Lire TXTTAB et VARTAB depuis la RAM
+    uint16_t start_addr = bus.read(0x84) | (bus.read(0x85) << 8);
+    uint16_t end_addr   = bus.read(0x86) | (bus.read(0x87) << 8);
+
+    if (end_addr <= start_addr) {
+        std::cout << "\n[KCS-SAVE] Programme vide ou TXTTAB/VARTAB invalides"
+                  << " (start=$" << std::hex << start_addr
+                  << " end=$"    << end_addr << std::dec << ")\n";
+        // Injecter quand même une touche pour ne pas bloquer la ROM
+        bus.getACIA().injectByte('\r');
+        return;
+    }
+
+    // Extraire les données du programme BASIC depuis la RAM
+    size_t length = end_addr - start_addr;
+    std::vector<uint8_t> data(length);
+    for (size_t i = 0; i < length; i++)
+        data[i] = bus.read(static_cast<uint16_t>(start_addr + i));
+
+    // Générer un nom de fichier horodaté dans CAS\
+    // Format : SAVE_XXXX_YYYYMMDD_HHMMSS.wav
+    SYSTEMTIME st;
+    GetLocalTime(&st);
+    char fname[64];
+    snprintf(fname, sizeof(fname), "SAVE_%04X_%04d%02d%02d_%02d%02d%02d.wav",
+             start_addr,
+             st.wYear, st.wMonth, st.wDay,
+             st.wHour, st.wMinute, st.wSecond);
+    std::string out_path = casDir() + fname;
+
+    // Encoder en WAV KCS
+    bool ok = KCS::encode(data.data(), data.size(), start_addr, out_path);
+
+    // Afficher le résultat AVANT d'injecter la touche (qui déclenchera
+    // la suite de la ROM et pourrait écraser notre message)
+    bus.getACIA().flushDisplay();
+    if (ok) {
+        std::cout << "\n[KCS-SAVE] " << length << " octets sauvegardés"
+                  << " ($" << std::hex << start_addr
+                  << "-$"  << (end_addr-1) << std::dec << ")"
+                  << "\n[KCS-SAVE] WAV -> CAS\\" << fname << "\n";
+    } else {
+        std::cout << "\n[KCS-SAVE] ERREUR : impossible d'écrire " << out_path << "\n";
+    }
+
+    // Injecter une touche pour que la ROM continue (acquittement "REC")
+    bus.getACIA().injectByte('\r');
+}
+
+// ============================================================
+//  KCS LOAD : lit un WAV depuis CAS\, décode et écrit en RAM
+// ============================================================
+//
+//  Quand le BASIC exécute LOAD, la ROM affiche "Press PLAY then any key".
+//  On présente la liste des WAV disponibles, on décode le fichier choisi,
+//  on écrit les données en RAM et on met à jour VARTAB ($86/$87).
+//
+static void handleKCSLoad(Bus& bus, CPU65C02& cpu) {
+    // Lister les .wav dans CAS\
+    namespace fs = std::filesystem;
+    std::vector<std::string> wavFiles;
+    std::error_code ec;
+    for (const auto& entry : fs::directory_iterator(casDir(), ec)) {
+        if (!entry.is_regular_file(ec)) continue;
+        std::string ext = entry.path().extension().string();
+        std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+        if (ext == ".wav")
+            wavFiles.push_back(entry.path().filename().string());
+    }
+    std::sort(wavFiles.begin(), wavFiles.end());
+
+    // Afficher le menu de sélection
+    bus.getACIA().flushDisplay();
+    bus.getACIA().clearDisplayBuf();
+
+    std::string menu;
+    menu += "\n\033[0m";
+    menu += "+----------------------------------------------------------+\n";
+    menu += "|  KCS LOAD -- CHARGEMENT CASSETTE                        |\n";
+    menu += "+----------------------------------------------------------+\n";
+    if (wavFiles.empty()) {
+        menu += "|  (aucun fichier .wav dans le dossier CAS)               |\n";
+    } else {
+        for (size_t i = 0; i < wavFiles.size(); i++) {
+            std::string display = "  " + std::to_string(i+1) + ". " + wavFiles[i];
+            if (display.size() > 58) display = display.substr(0, 55) + "...";
+            while (display.size() < 58) display += ' ';
+            menu += "|" + display + "|\n";
+        }
+    }
+    menu += "+----------------------------------------------------------+\n";
+    menu += "| Numero ou nom (Entree = annuler) : ";
+
+    HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
+    HANDLE hIn  = GetStdHandle(STD_INPUT_HANDLE);
+    DWORD savedMode = 0;
+    GetConsoleMode(hIn, &savedMode);
+    SetConsoleMode(hIn, ENABLE_PROCESSED_INPUT);
+    FlushConsoleInputBuffer(hIn);
+
+    DWORD written = 0;
+    WriteConsoleA(hOut, menu.c_str(), (DWORD)menu.size(), &written, nullptr);
+
+    // Saisie caractère par caractère
+    std::string choice;
+    while (true) {
+        INPUT_RECORD rec; DWORD nr = 0;
+        if (!ReadConsoleInputA(hIn, &rec, 1, &nr) || nr == 0) continue;
+        if (rec.EventType != KEY_EVENT || !rec.Event.KeyEvent.bKeyDown) continue;
+        char ch = rec.Event.KeyEvent.uChar.AsciiChar;
+        WORD vk = rec.Event.KeyEvent.wVirtualKeyCode;
+        if (vk == VK_RETURN) { WriteConsoleA(hOut, "\n", 1, &written, nullptr); break; }
+        if ((vk == VK_BACK || ch == '\b') && !choice.empty()) {
+            choice.pop_back();
+            WriteConsoleA(hOut, "\b \b", 3, &written, nullptr);
+        } else if (ch >= 32 && ch < 127) {
+            choice += ch;
+            WriteConsoleA(hOut, &ch, 1, &written, nullptr);
+        }
+    }
+    const char* footer = "+----------------------------------------------------------+\n";
+    WriteConsoleA(hOut, footer, (DWORD)strlen(footer), &written, nullptr);
+    SetConsoleMode(hIn, savedMode);
+    FlushConsoleInputBuffer(hIn);
+    bus.getACIA().clearDisplayBuf();
+
+    // Résoudre le fichier choisi
+    std::string filename;
+    if (!choice.empty() && !wavFiles.empty()) {
+        // Essayer par numéro
+        try {
+            int idx = std::stoi(choice) - 1;
+            if (idx >= 0 && idx < (int)wavFiles.size())
+                filename = wavFiles[idx];
+        } catch (...) {}
+        // Sinon par nom
+        if (filename.empty()) {
+            std::string ext = choice.size() >= 4 ?
+                choice.substr(choice.size()-4) : "";
+            std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+            if (ext != ".wav") choice += ".wav";
+            if (std::find(wavFiles.begin(), wavFiles.end(), choice) != wavFiles.end())
+                filename = choice;
+        }
+    }
+
+    if (filename.empty()) {
+        std::cout << "[KCS-LOAD] Annulé.\n";
+        // Injecter une touche pour ne pas bloquer la ROM (acquittement "PLAY")
+        bus.getACIA().injectByte('\r');
+        return;
+    }
+
+    std::string wav_path = casDir() + filename;
+    std::cout << "[KCS-LOAD] Décodage de " << filename << " ...\n";
+
+    KCS::DecodeResult res = KCS::decode(wav_path);
+    if (!res.ok) {
+        std::cout << "[KCS-LOAD] ERREUR : " << res.error << "\n";
+        bus.getACIA().injectByte('\r');
+        return;
+    }
+
+    // Écrire les données directement en RAM
+    uint16_t start = res.start_addr;
+    for (size_t i = 0; i < res.data.size(); i++)
+        bus.write(static_cast<uint16_t>(start + i), res.data[i]);
+
+    // Activer le ROM overlay : Bus::read(E389)=CLC, Bus::read(E38A)=RTS
+    // La ROM appelle JSR E389 depuis F952 -> exécute CLC+RTS -> carry=0
+    // -> BCS F9BD non pris -> affiche "Loaded." et l'adresse.
+    bus.enableKCSOverlay(start, static_cast<uint16_t>(res.data.size()));
+
+    std::cout << "[KCS-LOAD] " << res.data.size() << " octets chargés"
+              << " à $" << std::hex << start << std::dec
+              << " -- overlay ROM E389=CLC+RTS actif\n";
+
+    // Injecter \r pour acquitter "Press PLAY then any key"
+    bus.getACIA().injectByte('\r');
 }
 
 // ============================================================
@@ -507,7 +828,7 @@ static void readKeyboardInput(Bus& bus, CPU65C02& cpu) {
 //  Boucle d'émulation
 // ============================================================
 void runEmulator(Bus& bus, CPU65C02& cpu) {
-    const int  CYCLES_PAR_MS = 1000;
+    const int  CYCLES_PAR_MS = 750;   // 0.75 MHz (-25% vs 1 MHz d'origine)
     const auto DUREE_MS      = std::chrono::microseconds(1000);
 
     while (true) {
@@ -520,13 +841,45 @@ void runEmulator(Bus& bus, CPU65C02& cpu) {
         for (int i = 0; i < CYCLES_PAR_MS; ++i) {
             cpu.irq_line = bus.getACIA().hasInterrupt();
             cpu.clock();
+
+            // Avancer le signal KCS à chaque cycle CPU (pour Bus::read($B001))
+            bus.tickKCS();
+
+            // Tick VIA cycle par cycle : indispensable pour que le
+            // basculement de PB7 (Timer 1 auto-toggle) soit synchrone
+            // avec l'échantillonnage audio ci-dessous. Avant ce fix,
+            // via.tick() était appelé une seule fois après la boucle
+            // CPU, donc isBuzzerOn() renvoyait toujours l'état de la
+            // période précédente → craquement au démarrage.
+            bus.getVIA().tick(1);
+
+            // Echantillonnage du buzzer (broche PB7) à chaque cycle CPU.
+            // On passe aussi isACRAutoToggle() pour que l'AudioEngine
+            // émette du silence (0) quand aucun TONE n'est actif,
+            // évitant le craquement DC au démarrage.
+            g_audio.tick(bus.getVIA().isBuzzerOn(), bus.getVIA().isACRAutoToggle());
         }
 
-        // Affichage
+        // ── Détection KCS SAVE / LOAD ─────────────────────────────────────
+        // On inspecte le buffer de TEXTE BRUT (sans codes ANSI) de l'ACIA.
+        // getDisplayBuf() contient des séquences ANSI entrecoupées qui
+        // empêchent un simple find("Press REC") de fonctionner.
+        // getRawBuf() ne contient que les caractères ASCII visibles.
+        {
+            const std::string& raw = bus.getACIA().getRawBuf();
+            if (raw.find("Press REC") != std::string::npos) {
+                bus.getACIA().clearDisplayBuf(); // vide display_buf ET raw_buf
+                handleKCSSave(bus, cpu);
+            } else if (raw.find("Press PLAY") != std::string::npos) {
+                bus.getACIA().clearDisplayBuf();
+                handleKCSLoad(bus, cpu);
+            }
+        }
+
+        // Affichage (après la détection KCS)
         bus.getACIA().flushDisplay();
 
-        // Tick VIA
-        bus.getVIA().tick(CYCLES_PAR_MS);
+        // Tick ACIA (moins critique, peut rester groupé par ms)
         bus.getACIA().tick(CYCLES_PAR_MS);
 
         // Synchronisation
@@ -555,7 +908,7 @@ int main(int argc, char* argv[]) {
 
     std::cout << "\033[0m";  // reset attributs ANSI
     std::cout << "========================================\n";
-    std::cout << "  MEMO-1 Emulator (W65C02 @ 1MHz)\n";
+    std::cout << "  MEMO-1 Emulator (W65C02 @ 0.75MHz)\n";
     std::cout << "  Terminal Minitel Emule\n";
     std::cout << "========================================\n\n";
     std::cout.flush();
@@ -607,6 +960,14 @@ int main(int argc, char* argv[]) {
     std::string hdd = hddDir();
     std::cout << "[MEMO-1] Disque HDD pret : " << hdd << "\n";
     std::cout << "[MEMO-1] Ctrl+S = sauvegarder, Ctrl+O = charger un .bas, Ctrl+Q = quitter\n";
+
+    // Initialiser le son (buzzer PB7 du VIA). Non-bloquant si aucune
+    // carte son n'est disponible : l'émulateur continue sans audio.
+    if (g_audio.init()) {
+        std::cout << "[MEMO-1] Son active (buzzer PB7).\n";
+    } else {
+        std::cout << "[MEMO-1] Pas de peripherique audio detecte, emulation sans son.\n";
+    }
 
     std::cout << "[SYSTEME] Boucle active. (Ctrl+Q ou fermer la fenetre pour quitter)\n\n";
     std::cout.flush();

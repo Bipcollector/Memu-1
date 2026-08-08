@@ -1,3 +1,22 @@
+// ======================================================
+//  MEMU-1 - Emulateur Memo1
+// ======================================================
+//  Par Bipcollector, Claude, Kimi
+//  Lovable, Gemini & ChatGPT
+// ------------------------------------------------------
+//  Musiques :
+//    Berlinadine
+//    Forever Damned - Victorian Gothic Punk Rock
+//    Death to the Machines! - Geek Rock Alt Rock Punk
+//    '百鬼降壇' ー風魔會 禍祓座ー
+// ------------------------------------------------------
+//  Une Création BIP-SOFT - 2026
+// ======================================================
+//  Bastion Interplanétaire Positronique
+//  Bastion numérique dédiée à la création humaine
+//  par des systèmes artificiels
+// ======================================================
+
 #include "ACIA6551.h"
 #include <iostream>
 #include <sstream>
@@ -328,6 +347,12 @@ void ACIA6551::processNormal(uint8_t b) {
         // car c'est cet octet-là qu'il faudra réinjecter tel quel lors
         // d'un LOAD ultérieur pour reproduire le même texte.
         if (capturing) capture_buf += static_cast<char>(b);
+        // Buffer de texte brut pour la détection KCS (sans codes ANSI)
+        if (b >= 0x20 && b < 0x7F) {
+            raw_buf += static_cast<char>(b);
+            // Garder le raw_buf compact : on ne garde que les 128 derniers chars
+            if (raw_buf.size() > 128) raw_buf.erase(0, raw_buf.size() - 128);
+        }
         switch (b) {
             case 0x40: emit("\xc3\xa0"); break; // à
             case 0x5B: emit("\xc2\xb0"); break; // °

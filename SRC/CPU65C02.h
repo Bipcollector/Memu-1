@@ -1,3 +1,22 @@
+// ======================================================
+//  MEMU-1 - Emulateur Memo1
+// ======================================================
+//  Par Bipcollector, Claude, Kimi
+//  Lovable, Gemini & ChatGPT
+// ------------------------------------------------------
+//  Musiques :
+//    Berlinadine
+//    Forever Damned - Victorian Gothic Punk Rock
+//    Death to the Machines! - Geek Rock Alt Rock Punk
+//    '百鬼降壇' ー風魔會 禍祓座ー
+// ------------------------------------------------------
+//  Une Création BIP-SOFT - 2026
+// ======================================================
+//  Bastion Interplanétaire Positronique
+//  Bastion numérique dédiée à la création humaine
+//  par des systèmes artificiels
+// ======================================================
+
 #pragma once
 #include <cstdint>
 #include <array>

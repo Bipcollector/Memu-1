@@ -1,3 +1,22 @@
+// ======================================================
+//  MEMU-1 - Emulateur Memo1
+// ======================================================
+//  Par Bipcollector, Claude, Kimi
+//  Lovable, Gemini & ChatGPT
+// ------------------------------------------------------
+//  Musiques :
+//    Berlinadine
+//    Forever Damned - Victorian Gothic Punk Rock
+//    Death to the Machines! - Geek Rock Alt Rock Punk
+//    '百鬼降壇' ー風魔會 禍祓座ー
+// ------------------------------------------------------
+//  Une Création BIP-SOFT - 2026
+// ======================================================
+//  Bastion Interplanétaire Positronique
+//  Bastion numérique dédiée à la création humaine
+//  par des systèmes artificiels
+// ======================================================
+
 #pragma once
 #include <cstdint>
 #include <queue>
@@ -44,6 +63,10 @@ public:
 
     // Vide le buffer d'affichage vers la console Windows
     void flushDisplay();
+    void clearDisplayBuf() { display_buf.clear(); raw_buf.clear(); }
+    const std::string& getDisplayBuf() const { return display_buf; }
+    // Texte brut sans codes ANSI — pour la détection KCS
+    const std::string& getRawBuf() const { return raw_buf; }
 
     // ---- Capture de texte pour la fonction SAVE ----
     // Pendant une capture, chaque caractère "logique" imprimable (G0)
@@ -109,6 +132,7 @@ private:
 
     // ---- Buffer de sortie (accumulé, vidé par flushDisplay) ----
     std::string display_buf;
+    std::string raw_buf;     // texte brut sans ANSI, pour détection KCS
 
     // ---- Capture de texte pour SAVE (voir startCapture/stopCapture) ----
     bool capturing = false;
