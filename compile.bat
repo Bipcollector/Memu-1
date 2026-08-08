@@ -10,7 +10,8 @@ g++ -std=c++17 -O2 -o MEMU1.exe ^
     SRC\ACIA6551.cpp ^
     SRC\VIA6522.cpp ^
     SRC\Bus.cpp ^
-    -static-libgcc -static-libstdc++ -static
+    SRC\AudioEngine.cpp ^
+    -static-libgcc -static-libstdc++ -static -lwinmm
 
 if %ERRORLEVEL% == 0 (
     echo ================================================
@@ -31,6 +32,7 @@ if %ERRORLEVEL% == 0 (
     echo Dans l'emulateur :
     echo   Ctrl+S = sauvegarder le programme BASIC courant dans HDD\
     echo   Ctrl+O = charger un programme .bas depuis HDD\
+    echo   Le buzzer (PB7 du VIA) est reproduit via la carte son
     echo.
     echo Lancement...
     MEMU1.exe %1
